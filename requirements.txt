@@ -1,0 +1,8 @@
+numpy
+pandas
+torch
+plotly
+streamlit
+yfinance
+scikit-learn
+hmmlearn
