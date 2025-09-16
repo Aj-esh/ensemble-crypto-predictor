@@ -1,9 +1,7 @@
 import os
 import numpy as np
-import pandas as pd
 
 import torch
-import torch.nn as nn
 
 import plotly.graph_objects as go
 import streamlit as st
@@ -11,7 +9,7 @@ import yfinance as yf
 
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 
-from modeldef import NBeatsModel, TimesNetModel, ResidualEnsemble, RegimeDetector
+from modeldef import ResidualEnsemble, RegimeDetector, create_time_features
 
 st.set_page_config(page_title="Time Series Forecasting Ensemble", layout="wide")
 
@@ -21,15 +19,15 @@ st.sidebar.write("Regime detection with HMM")
 
 st.subheader("data")
 ticker = "BTC-USD"
-btc_data = yf.download(ticker, start="2014-01-01", end="2024-01-01")
+btc_data = yf.download(ticker, start="2014-01-01", end="2024-01-01", auto_adjust=False)
 btc_data.reset_index(inplace=True)
 
 st.write(f"loaded {len(btc_data)} rows of {ticker} data")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-nbeats_path = os.path.join("models", "nbeats.pth")
-timesnet_path = os.path.join("models", "timesnet.pth")
+nbeats_path = os.path.join("weights", "best_nbeats_model.pth")
+timesnet_path = os.path.join("weights", "best_timesnet_model.pth")
 
 # Configs
 nbeats_configs = {
@@ -40,7 +38,9 @@ nbeats_configs = {
     "n_stacks": 3,
 }
 timesnet_configs = type("Configs", (), {})()
+timesnet_configs.task_name = 'long_term_forecast'
 timesnet_configs.seq_len = 14
+timesnet_configs.label_len = 0
 timesnet_configs.pred_len = 1
 timesnet_configs.enc_in = 1
 timesnet_configs.c_out = 1
@@ -59,8 +59,11 @@ ensemble = ResidualEnsemble(
 
 # Inference
 close_prices = btc_data["Close"].values
-X = torch.tensor(close_prices[:-1], dtype=torch.float32).unsqueeze(0).unsqueeze(-1).to(device)
-x_mark = torch.zeros_like(X).to(device)  # placeholder if you have time features
+X = torch.tensor(close_prices.reshape(-1, 1), dtype=torch.float32).unsqueeze(0).to(device)
+
+# Create time features for the entire dataset
+time_features = create_time_features(btc_data, time_col='Date', freq='d')
+x_mark = torch.tensor(time_features, dtype=torch.float32).unsqueeze(0).to(device)
 
 with torch.inference_mode():
     preds = []
@@ -74,15 +77,15 @@ with torch.inference_mode():
 preds = np.array(preds)
 btc_data = btc_data.iloc[timesnet_configs.seq_len:].copy()
 btc_data["Prediction"] = preds
-btc_data["Residual"] = btc_data["Close"] - btc_data["Prediction"]
+btc_data["Residual"] = btc_data["Close"].values.flatten() - btc_data["Prediction"].values.flatten()
 
 # Regime Detection
 detector = RegimeDetector(n_states=3)
 detector.fit(btc_data)
 btc_data["Regime"] = [detector.detect(np.array([r, v, res]))[0]
                       for r, v, res in zip(
-                          np.log(btc_data["Close"]).diff().fillna(0),
-                          btc_data["Close"].pct_change().rolling(14).std().fillna(0),
+                          btc_data['logreturns'].fillna(0),
+                          btc_data['volume'].fillna(0),
                           btc_data["Residual"]
                       )]
 
@@ -134,5 +137,5 @@ mape = mean_absolute_percentage_error(btc_data["Close"], btc_data["Prediction"])
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("RMSE", f"{rmse:.2f}")
 col2.metric("MAPE", f"{mape*100:.2f}%")
-col3.metric("Latest Price", f"{btc_data['Close'].iloc[-1]:,.2f}")
-col4.metric("Latest Regime", f"{btc_data['Regime'].iloc[-1]}")
+col3.metric("Latest Price", btc_data['Close'].iloc[-1])
+col4.metric("Latest Regime", btc_data['Regime'].iloc[-1])

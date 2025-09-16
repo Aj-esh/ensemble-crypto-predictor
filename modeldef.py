@@ -351,7 +351,7 @@ class ResidualEnsemble(nn.Module):
 
         self.nbeats_model.eval()
         self.timesnet_model.eval()
-
+        self.w = 0.01
     def forward(self, x_enc, x_mark_enc):
         with torch.inference_mode():
             # nbeats prediction
@@ -364,7 +364,7 @@ class ResidualEnsemble(nn.Module):
             residual_out = self.timesnet_model(x_enc, x_mark_enc, dec_input, dec_input) # [B, pred_len, 1]
 
             # Final prediction
-            final_out = nbeats_out + residual_out
+            final_out = nbeats_out * (1-self.w) + residual_out * self.w
             return final_out
 
 
@@ -377,8 +377,8 @@ class RegimeDetector:
 
     def fit(self, df):
         df['logreturns'] = np.log(df['Close'] / df['Close'].shift(1))
-        df['volume'] = df['logreturns'].rolling(window=14).std().fillna(method='bfill')
-        X = df[['logreturns', 'volume', 'residuals_train']].fillna(0).values
+        df['volume'] = df['logreturns'].rolling(window=14).std().bfill()
+        X = df[['logreturns', 'volume', 'Residual']].fillna(0).values
 
         X_scaled = self.scaler.fit_transform(X)
         self.model.fit(X_scaled)
