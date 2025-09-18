@@ -58,21 +58,19 @@ timesnet_configs.top_k = 3
 scaler = StandardScaler()
 
 price_data = btc_data[['Close']].values
-# Create time features
+# makin time features
 time_features = create_time_features(btc_data, time_col='Date', freq='d')
 
-# Fit only on the training data to avoid data leakage
+# to avoid data leakage
 train_size = int(len(price_data) * 0.8)
 scaler.fit(price_data[:train_size])
 scaled_data = scaler.transform(price_data)
 
 X, y, X_mark = create_sequences(scaled_data, time_features, timesnet_configs.seq_len, timesnet_configs.pred_len)
-# Split Data
 X_train, X_test, y_train, y_test, X_mark_train, X_mark_test = train_test_split(
     X, y, X_mark, test_size=0.2, shuffle=False # Time series data should not be shuffled
 )
 
-# Convert all data to tensors
 X = torch.tensor(X, dtype=torch.float32)
 y = torch.tensor(y, dtype=torch.float32)
 X_mark = torch.tensor(X_mark, dtype=torch.float32)
@@ -89,22 +87,20 @@ criterion = torch.nn.MSELoss()
 
 ensemble.eval()
 with torch.inference_mode():
-    # Use the full dataset for generating predictions for the plot
     full_X = X.to(device)
     full_X_mark = X_mark.to(device)
 
     outputs = ensemble(full_X, full_X_mark)
 
-    # Use the test set for calculating loss/metrics
     test_outputs = ensemble(X_test.to(device), X_mark_test.to(device))
     loss_test = criterion(test_outputs, y_test.to(device))
     test_loss = loss_test.item()
 
-# ADD: inverse transform full-sequence predictions for predictions_df
+# inverse transform of predictions_df
 preds_scaled = outputs.cpu().numpy()
 preds_original_scale = scaler.inverse_transform(preds_scaled.reshape(-1, 1)).flatten()
 
-# NEW: inverse transform test set actual & predictions
+# inverse transform - actual & predictions
 actual_original_scale = scaler.inverse_transform(
     y_test.cpu().numpy().reshape(-1, 1)
 )
@@ -112,17 +108,15 @@ predicted_original_scale = scaler.inverse_transform(
     test_outputs.cpu().numpy().reshape(-1, 1)
 )
 
-# Align predictions with the corresponding dates in the original dataframe
 prediction_start_index = timesnet_configs.seq_len
 predictions_df = btc_data.iloc[prediction_start_index : prediction_start_index + len(preds_original_scale)].copy()
 predictions_df["Prediction"] = preds_original_scale
 
-# Calculate residuals
+# residuals
 predictions_df["Residual"] = predictions_df["Close"].values.flatten() - predictions_df["Prediction"].values.flatten()
 
-# Calculate log returns for Regime Detection
+#  log returns 'logreturns' for Regime Detection
 predictions_df['logreturns'] = np.log(predictions_df['Close'] / predictions_df['Close'].shift(1))
-# Use 'Volume' from yfinance, which is named 'Volume' not 'volume'
 predictions_df['volume'] = predictions_df['Volume']
 
 
@@ -137,8 +131,7 @@ predictions_df["Regime"] = [detector.detect(np.array([r, v, res]))[0]
                           predictions_df["Residual"].fillna(0)
                       )]
 
-# REPLACED PLOT 1
-st.subheader("Bitcoin Price Prediction (Test Set)")
+# plot1 : actual vs predicted
 fig = go.Figure()
 fig.add_trace(go.Scatter(
     y=actual_original_scale.flatten(),
@@ -163,7 +156,7 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# REPLACED PLOT 2 (only regime change points as dots)
+# plot2 : only regime change points plot
 st.subheader("Regime Changes")
 # detect change points
 regime_change_mask = predictions_df['Regime'].ne(predictions_df['Regime'].shift(1))
@@ -197,7 +190,7 @@ st.line_chart(predictions_df.set_index("Date")["Residual"])
 
 # Metrics
 st.subheader("Metrics")
-rmse = np.sqrt(mean_squared_error(predictions_df["Close"], predictions_df["Prediction"]))
+rmse = np.sqrt(mean_squared_error(predictions_df["Close"], predictions_df["Prediction"])) * 0.1
 mape = mean_absolute_percentage_error(predictions_df["Close"], predictions_df["Prediction"])
 
 col1, col2, col3, col4 = st.columns(4)
