@@ -357,14 +357,14 @@ class ResidualEnsemble(nn.Module):
             # nbeats prediction
             nbeats_input = x_enc.view(x_enc.size(0), -1) # [B, seq_len]
             nbeats_out_flat = self.nbeats_model(nbeats_input) # [B, pred_len]
-            nbeats_out = nbeats_out_flat.unsqueeze(-1) # [B, pred_len, 1]
+            nbeats_out = nbeats_out_flat.unsqueeze(-1) * (1-self.w) # [B, pred_len, 1]
             
             # timesnet prediction on residuals
             dec_input = torch.zeros_like(nbeats_out).to(x_enc.device)
-            residual_out = self.timesnet_model(x_enc, x_mark_enc, dec_input, dec_input) # [B, pred_len, 1]
+            residual_out = self.timesnet_model(x_enc, x_mark_enc, dec_input, dec_input)  * self.w # [B, pred_len, 1]
 
             # Final prediction
-            final_out = nbeats_out * (1-self.w) + residual_out * self.w
+            final_out = nbeats_out + residual_out
             return final_out
 
 
